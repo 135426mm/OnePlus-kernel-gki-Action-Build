@@ -118,6 +118,10 @@ on:
         description: "自定义内核等级欺骗(SUBLEVEL)"
         required: false
         default: ""
+      KERNEL_FULL:
+        description: "完整内核版本(如 5.10.248, 6.6.139；留空则使用清单默认版本)"
+        required: false
+        default: ""
       FAST_BUILD:
         type: boolean
         description: "是否启用极速构建？"
@@ -442,6 +446,38 @@ jobs:
           fi
 
           # 从 Makefile 获取完整内核版本号(TKERNEL_VERSION)以及可选的修改内核等级
+          # 自定义内核版本覆盖(KERNEL_FULL)
+          KERNEL_FULL_INPUT="${{ github.event.inputs.KERNEL_FULL }}"
+          if [ -n "$KERNEL_FULL_INPUT" ]; then
+            echo "检测到自定义内核版本: $KERNEL_FULL_INPUT"
+            KF_PARTS=$(echo "$KERNEL_FULL_INPUT" | tr '.' '\n')
+            KF_MAJOR=$(echo "$KF_PARTS" | sed -n '1p')
+            KF_MINOR=$(echo "$KF_PARTS" | sed -n '2p')
+            KF_SUB=$(echo "$KF_PARTS" | sed -n '3p')
+            if [ -z "$KF_MAJOR" ] || [ -z "$KF_MINOR" ] || [ -z "$KF_SUB" ]; then
+              echo "::error::KERNEL_FULL 格式错误，应为 X.Y.Z，例如 5.10.248"
+              exit 1
+            fi
+            for P in "$KF_MAJOR" "$KF_MINOR" "$KF_SUB"; do
+              if ! [[ "$P" =~ ^[0-9]+$ ]]; then
+                echo "::error::KERNEL_FULL 格式错误，X.Y.Z 各段须为数字"
+                exit 1
+              fi
+            done
+            echo "KERNEL_VERSION=${KF_MAJOR}.${KF_MINOR}" >> $GITHUB_ENV
+            case "${KF_MAJOR}.${KF_MINOR}" in
+              "5.10") echo "KANDROID_VERSION=android12" >> $GITHUB_ENV ;;
+              "5.15") echo "KANDROID_VERSION=android13" >> $GITHUB_ENV ;;
+              "6.1")  echo "KANDROID_VERSION=android14" >> $GITHUB_ENV ;;
+              "6.6")  echo "KANDROID_VERSION=android15" >> $GITHUB_ENV ;;
+              "6.12") echo "KANDROID_VERSION=android16" >> $GITHUB_ENV ;;
+              *)
+                echo "::error::未适配的内核版本: ${KF_MAJOR}.${KF_MINOR}，支持的版本: 5.10 / 5.15 / 6.1 / 6.6 / 6.12"
+                exit 1
+                ;;
+            esac
+            echo "自定义内核版本生效: ${KF_MAJOR}.${KF_MINOR}.${KF_SUB} ($KANDROID_VERSION)"
+          fi
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
 
           # 强制修改 SUBLEVEL(内核等级)
@@ -465,9 +501,19 @@ jobs:
           fi
 
           # 内核版本的数字转换(对比用)
-          echo "KV1=${BRANCH#*-}"       | cut -d. -f1 >> $GITHUB_ENV
-          echo "KV2=${BRANCH#*-}"       | tr -d '.' >> $GITHUB_ENV
-          echo "KV3=${NEW_VERSION}"     | tr -d '.' >> $GITHUB_ENV
+          # 使用可能的自定义内核版本
+          _KV_OVERRIDE="${{ github.event.inputs.KERNEL_FULL }}"
+          if [ -n "$_KV_OVERRIDE" ]; then
+            _KV_PARTS=$(echo "$_KV_OVERRIDE" | tr '.' ' ')
+            _KV1=$(echo "$_KV_PARTS" | awk '{print $1}')
+            _KV2=$(echo "$_KV_PARTS" | tr -d ' .')
+            echo "KV1=${_KV1}" >> $GITHUB_ENV
+            echo "KV2=${_KV2}" >> $GITHUB_ENV
+          else
+            echo "KV1=${BRANCH#*-}"       | cut -d. -f1 >> $GITHUB_ENV
+            echo "KV2=${BRANCH#*-}"       | tr -d '.' >> $GITHUB_ENV
+          fi
+
 
       - name: Rust Version Handling
         run: |
