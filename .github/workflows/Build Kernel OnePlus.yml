@@ -116,6 +116,10 @@ on:
         description: "自定义内核等级欺骗(SUBLEVEL)"
         required: false
         default: ""
+      KERNEL_FULL:
+        description: "完整内核版本(如 5.10.248, 6.6.139；留空则使用清单默认版本)"
+        required: false
+        default: ""
       FAST_BUILD:
         type: boolean
         description: "是否启用极速构建？"
