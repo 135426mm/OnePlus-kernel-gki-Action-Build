@@ -1323,6 +1323,13 @@ jobs:
           zip -r "../AnyKernel3_Output.zip" . -x ".git/*"
           echo "Packaged AnyKernel3 output: ../AnyKernel3_Output.zip"
           ls -la ../AnyKernel3_Output.zip
+      - name: Package AnyKernel3
+        run: |
+          cd ./AnyKernel3
+          zip -r "../AnyKernel3_Output.zip" . -x ".git/*"
+          echo "Packaged AnyKernel3 output: ../AnyKernel3_Output.zip"
+          ls -la ../AnyKernel3_Output.zip
+
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
