@@ -1317,6 +1317,12 @@ jobs:
         run: |
           echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}" >> $GITHUB_OUTPUT
 
+      - name: Package AnyKernel3
+        run: |
+          cd ./AnyKernel3
+          zip -r "../AnyKernel3_Output.zip" . -x ".git/*"
+          echo "Packaged AnyKernel3 output: ../AnyKernel3_Output.zip"
+          ls -la ../AnyKernel3_Output.zip
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
