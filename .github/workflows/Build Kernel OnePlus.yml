@@ -1342,6 +1342,12 @@ jobs:
           name: AnyKernel3_Output
           path: ./AnyKernel3_Output.zip
 
+      - name: Upload AnyKernel3 Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3_Output
+          path: ./AnyKernel3_Output.zip
+
       - name: Extract and Process ZRAM Module
         if: startsWith(github.event.inputs.ZRAM, '1/')
         id: zram_find
