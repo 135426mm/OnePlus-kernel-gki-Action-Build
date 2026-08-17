@@ -659,7 +659,7 @@ jobs:
           echo "manager_branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "manager_artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
 
-      - name: Add SukiSU Ultra
+      - name: Add ReSukiSU
         run: |
           cd kernel_workspace/kernel_platform
           MANAGER_BRANCH="${{ steps.manager.outputs.manager_branch }}"
@@ -739,7 +739,7 @@ jobs:
           grep "KSU_VERSION_FULL" kernel/Kbuild
           echo "::endgroup::"
 
-      - name: Apply Patches SukiSU Ultra
+      - name: Apply Patches ReSukiSU
         env:
           FILE: ${{ github.event.inputs.FILE }}
         run: |
@@ -942,7 +942,7 @@ jobs:
           CONFIG_FILE=./arch/arm64/configs/gki_defconfig
           KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
 
-          # SukiSU Ultra配置
+          # ReSukiSU配置
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
 
           # KPM配置
