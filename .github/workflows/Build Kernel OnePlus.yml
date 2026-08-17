@@ -1273,12 +1273,6 @@ jobs:
           echo "Packaged AnyKernel3 output: ../AnyKernel3_Output.zip"
           ls -la ../AnyKernel3_Output.zip
 
-      - name: Upload AnyKernel3
-        uses: actions/upload-artifact@v4
-        with:
-          name: AnyKernel3_ReSukiSU_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
-          path: ./AnyKernel3/*
-
       - name: Upload AnyKernel3 Zip
         uses: actions/upload-artifact@v4
         with:
