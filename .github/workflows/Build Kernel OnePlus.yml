@@ -62,8 +62,6 @@ on:
         required: true
         default: MD3
         options:
-          - MIUIX
-          - MIUIX_SPOOF
           - MD3
           - MD3_SPOOF
       SUSFS_CI:
@@ -103,7 +101,7 @@ on:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)"
         required: false
-        default: "builtin/Numbersf/"
+        default: "main/Numbersf/"
       ZRAM:
         type: string
         description: "ZRAM(0关闭1开启)/算法名/大小"
@@ -445,7 +443,6 @@ jobs:
             echo "No BRANCH found in build.config* and ACK_SHA files"
           fi
 
-          # 从 Makefile 获取完整内核版本号(TKERNEL_VERSION)以及可选的修改内核等级
           # 自定义内核版本覆盖(KERNEL_FULL)
           KERNEL_FULL_INPUT="${{ github.event.inputs.KERNEL_FULL }}"
           if [ -n "$KERNEL_FULL_INPUT" ]; then
@@ -478,6 +475,8 @@ jobs:
             esac
             echo "自定义内核版本生效: ${KF_MAJOR}.${KF_MINOR}.${KF_SUB} ($KANDROID_VERSION)"
           fi
+
+          # 从 Makefile 获取完整内核版本号(TKERNEL_VERSION)以及可选的修改内核等级
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
 
           # 强制修改 SUBLEVEL(内核等级)
@@ -501,6 +500,7 @@ jobs:
           fi
 
           # 内核版本的数字转换(对比用)
+          # 内核版本的数字转换(对比用)
           # 使用可能的自定义内核版本
           _KV_OVERRIDE="${{ github.event.inputs.KERNEL_FULL }}"
           if [ -n "$_KV_OVERRIDE" ]; then
@@ -513,7 +513,6 @@ jobs:
             echo "KV1=${BRANCH#*-}"       | cut -d. -f1 >> $GITHUB_ENV
             echo "KV2=${BRANCH#*-}"       | tr -d '.' >> $GITHUB_ENV
           fi
-
 
       - name: Rust Version Handling
         run: |
@@ -638,21 +637,13 @@ jobs:
           MANAGER_SOURCE="${{ github.event.inputs.MANAGER_SOURCE }}"
 
           case "$MANAGER_SOURCE" in
-            MD3)
-              BRANCH="main"
-              ARTIFACT="Manager"
-              ;;
             MD3_SPOOF)
               BRANCH="main"
-              ARTIFACT="Spoofed-Manager"
+              ARTIFACT="Spoofed-Manager-release"
               ;;
-            MIUIX_SPOOF)
+            MD3|*)
               BRANCH="main"
-              ARTIFACT="Spoofed-Manager"
-              ;;
-            MIUIX|*)
-              BRANCH="main"
-              ARTIFACT="Manager"
+              ARTIFACT="Manager-release"
               ;;
           esac
 
@@ -669,75 +660,28 @@ jobs:
           if [[ "$KSU_META" != */* ]]; then
             # 纯分支名，无分隔符
             BRANCH_NAME="$KSU_META"
-            CUSTOM_TAG=""
+            KSU_CUSTOM_TAG=""
             MANUAL_HASH=""
           else
-            IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$KSU_META"
+            IFS='/' read -r BRANCH_NAME KSU_CUSTOM_TAG MANUAL_HASH <<< "$KSU_META"
           fi
           echo "分支名: $BRANCH_NAME"
-          [[ -n "$CUSTOM_TAG" ]] && echo "自定义版本标识: $CUSTOM_TAG" || echo "自定义版本标识: 未启用"
+          [[ -n "$KSU_CUSTOM_TAG" ]] && echo "自定义版本标识: $KSU_CUSTOM_TAG" || echo "自定义版本标识: 未启用"
           [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
 
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/${MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$BRANCH_NAME"
           cd ./KernelSU
 
-          # 如果指定了手动 hash，就切换到该提交
+          if [[ -n "$KSU_CUSTOM_TAG" ]]; then
+            echo "KSU_CUSTOM_TAG=$KSU_CUSTOM_TAG" >> "$GITHUB_ENV"
+          fi
           if [[ -n "$MANUAL_HASH" ]]; then
             git fetch origin "$BRANCH_NAME" --depth=50
             git checkout "$MANUAL_HASH"
-            SHORT_HASH=${MANUAL_HASH:0:8}
           fi
 
-          KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/$BRANCH_NAME/kernel/Kbuild" | \
-            grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
-          if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
-            KSU_API_VERSION="3.1.7"
-          fi
-          echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
-
-          GIT_HASH=$(git rev-parse --short HEAD)
-          echo "GIT_HASH=$GIT_HASH"
-
-          # 组装版本号
-          if [[ -n "$MANUAL_HASH" ]]; then
-            USE_HASH="$SHORT_HASH"
-          else
-            USE_HASH="$GIT_HASH"
-          fi
-          if [[ -z "$CUSTOM_TAG" ]]; then
-            VERSION_FULL="v$KSU_API_VERSION-$USE_HASH@$BRANCH_NAME"
-          else
-            VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
-          fi
-
-          # 清理并写入 Kbuild 版本信息
-          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
-          sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
-          sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
-
-          VERSION_DEFINITIONS=$(cat <<EOF
-            define get_ksu_version_full
-            $VERSION_FULL
-            endef
-
-            KSU_VERSION_API := $KSU_API_VERSION
-            KSU_VERSION_FULL := $VERSION_FULL
-          EOF
-          )
-
-          awk -v def="$VERSION_DEFINITIONS" '
-            /REPO_OWNER :=/ {print; print def; inserted=1; next}
-            1
-            END {if (!inserted) print def}
-          ' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
-
-          KSU_VERSION=$(expr $(git rev-list --count "$MANAGER_BRANCH" 2>/dev/null || echo 13000) + 37185)
+          KSU_VERSION=$(expr $(git rev-list --count "$MANAGER_BRANCH" 2>/dev/null || echo 13000) + 30700)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-
-          echo "::group::最终 Kbuild 中版本信息及部分调试结果预览"
-          grep -A10 "REPO_OWNER" kernel/Kbuild
-          grep "KSU_VERSION_FULL" kernel/Kbuild
-          echo "::endgroup::"
 
       - name: Apply Patches ReSukiSU
         env:
@@ -941,9 +885,14 @@ jobs:
           cd kernel_workspace/kernel_platform/common
           CONFIG_FILE=./arch/arm64/configs/gki_defconfig
           KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
+          MANAGER_BRANCH="${{ steps.manager.outputs.manager_branch }}"
 
           # ReSukiSU配置
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" >> "$CONFIG_FILE"
+          if [[ -n "$KSU_CUSTOM_TAG" ]]; then
+            echo "CONFIG_KSU_FULL_NAME_FORMAT=\"%TAG_NAME%-${KSU_CUSTOM_TAG}@${MANAGER_BRANCH}[%COMMIT_SHA%]\"" >> "$CONFIG_FILE"
+          fi
 
           # KPM配置
           if [ "${{ github.event.inputs.KPM }}" = "KPM" ] || [ "${{ github.event.inputs.KPM }}" = "N/A" ]; then
@@ -1323,6 +1272,13 @@ jobs:
           zip -r "../AnyKernel3_Output.zip" . -x ".git/*"
           echo "Packaged AnyKernel3 output: ../AnyKernel3_Output.zip"
           ls -la ../AnyKernel3_Output.zip
+
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3_ReSukiSU_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
+          path: ./AnyKernel3/*
+
       - name: Upload AnyKernel3 Zip
         uses: actions/upload-artifact@v4
         with:
