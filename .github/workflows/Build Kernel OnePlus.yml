@@ -639,11 +639,11 @@ jobs:
 
           case "$MANAGER_SOURCE" in
             MD3)
-              BRANCH="old"
+              BRANCH="main"
               ARTIFACT="Manager"
               ;;
             MD3_SPOOF)
-              BRANCH="old"
+              BRANCH="main"
               ARTIFACT="Spoofed-Manager"
               ;;
             MIUIX_SPOOF)
