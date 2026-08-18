@@ -1,4 +1,9 @@
 name: Build All OnePlus Kernels
+
+permissions:
+  contents: write
+  actions: write
+
 on:
   workflow_dispatch:
     inputs:
@@ -182,16 +187,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Maximize Build Space
+
+      - name: 设置构建环境变量
+        run: |
+          echo "AVBTOOL=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/bin/avbtool" >> $GITHUB_ENV
+          echo "MKBOOTIMG=$GITHUB_WORKSPACE/mkbootimg/mkbootimg.py" >> $GITHUB_ENV
+          echo "UNPACK_BOOTIMG=$GITHUB_WORKSPACE/mkbootimg/unpack_bootimg.py" >> $GITHUB_ENV
+          echo "BOOT_SIGN_KEY_PATH=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/share/avb/testkey_rsa2048.pem" >> $GITHUB_ENV
+          mkdir -p $GITHUB_WORKSPACE/bootimgs
+
+      - name: 清理磁盘空间
         if: ${{ github.event.inputs.SPACE_NOCLEAN == 'false' }}
-        uses: easimon/maximize-build-space@master
+        uses: endersonmenezes/free-disk-space@v3
         with:
-          root-reserve-mb: 8192
-          temp-reserve-mb: 2048
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: "rmz"
+          rmz_version: "3.1.1"
+          testing: false
 
       - name: Extract Manifest Info
         id: extract_info
@@ -358,8 +377,8 @@ jobs:
           git config --global user.email "263623064@qq.com"
 
       - name: Install Dependencies + APTC
-        uses: awalsh128/cache-apt-pkgs-action@latest 
-        with: 
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
           packages: python3 git curl ccache libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk dos2unix kmod libdw-dev elfutils
           execute_install_scripts: true
 
@@ -1005,7 +1024,7 @@ jobs:
             echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
           fi
 
-          # IPSET & IPv6_NAT配置*
+          # IPSET 配置
           if [[ "${CPU}" == sm* && "${{ github.event.inputs.NETFILTER }}" == "true" ]]; then
             if [[ "$KERNEL_VERSION" != "6.12" ]]; then
               echo "CONFIG_BPF_STREAM_PARSER=y" >> "$CONFIG_FILE"
@@ -1030,7 +1049,7 @@ jobs:
             echo "CONFIG_IP_SET_HASH_NETPORT=y" >> "$CONFIG_FILE"
             echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> "$CONFIG_FILE"
             echo "CONFIG_IP_SET_LIST_SET=y" >> "$CONFIG_FILE"
-            echo "CONFIG_IP6_NF_NAT=y" >> "$CONFIG_FILE"
+            # CONFIG_IP6_NF_NAT 在 MTK 上可能编译失败，跳过
             echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> "$CONFIG_FILE"
           fi
 
@@ -1045,18 +1064,6 @@ jobs:
 
           # 移除构建审查
           sed -i 's/check_defconfig//' ./build.config.gki
-
-      - name: Fix IPv6_NAT Error
-        if: ${{ github.event.inputs.NETFILTER == 'true' }}
-        run: |
-          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
-          cd kernel_workspace/kernel_platform/common
-          if [[ "${CPU}" == sm* ]]; then
-            echo "修复启用IPv6 NAT后可能出现的设备误报…"
-            patch -p1 -F 3 < "${PATCH_DIR}/IPv6_NAT_FIX.patch"
-          else
-            echo "你的设备不支持 IPv6 NAT，跳过此步骤。"
-          fi
 
       # Custom kernel build time, without adding #1 SMP PREEMPT 自定义内核构建时间，不要加入#1 SMP PREEMPT
       - name: Custom BUILD_TIME
@@ -1261,6 +1268,98 @@ jobs:
           mv oImage Image
           cp Image "${GITHUB_WORKSPACE}/AnyKernel3/Image"
 
+      - name: 构建 Boot 镜像
+        run: |
+          cd kernel_workspace/kernel_platform
+          IMAGE_PATH=""
+          if [ -f "./common/out/Image" ]; then
+            IMAGE_PATH="./common/out/Image"
+          elif [ -f "./out/Image" ]; then
+            IMAGE_PATH="./out/Image"
+          fi
+          if [ -z "$IMAGE_PATH" ]; then
+            IMAGE_PATH=$(find . -name "Image" -path "*/out/*" | head -n 1)
+          fi
+          if [ -z "$IMAGE_PATH" ]; then
+            echo "未找到 Image 文件，跳过 boot 镜像构建"
+            exit 0
+          fi
+          echo "找到 Image: $IMAGE_PATH"
+          cp "$IMAGE_PATH" ./Image
+          mkdir -p ../bootimgs
+          cd ../bootimgs
+
+          if [ -d "out/ramdisk" ] || [ -f "../kernel_platform/out/ramdisk.cpio.gz" ]; then
+            RAMDISK_SRC=""
+            if [ -d "out/ramdisk" ]; then
+              RAMDISK_SRC="out/ramdisk"
+            elif [ -f "../kernel_platform/out/ramdisk.cpio.gz" ]; then
+              cp "../kernel_platform/out/ramdisk.cpio.gz" ./ramdisk.cpio.gz
+              RAMDISK_SRC="./ramdisk.cpio.gz"
+            fi
+            if [ -n "$RAMDISK_SRC" ]; then
+              gzip -n -k -f -9 ./Image > ./Image.gz 2>/dev/null || true
+              if command -v lz4 >/dev/null 2>&1; then
+                lz4 -9 -q ./Image ./Image.lz4 2>/dev/null || true
+              fi
+
+              OS_VERSION="15.0.0"
+              case "${{ env.KANDROID_VERSION }}" in
+                android12) OS_VERSION="12.0.0" ;;
+                android13) OS_VERSION="13.0.0" ;;
+                android14) OS_VERSION="14.0.0" ;;
+                android15) OS_VERSION="15.0.0" ;;
+                android16) OS_VERSION="16.0.0" ;;
+              esac
+
+              OS_PATCH="${{ steps.extract_info.outputs.value }}"
+              if [ -z "$OS_PATCH" ]; then OS_PATCH="2025-01"; fi
+
+              $MKBOOTIMG --header_version 4 --kernel Image --output boot.img --ramdisk $RAMDISK_SRC --os_version $OS_VERSION --os_patch_level "$OS_PATCH" 2>/dev/null || true
+              if [ -f "boot.img" ] && [ -f "$BOOT_SIGN_KEY_PATH" ]; then
+                $AVBTOOL add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) --image boot.img --algorithm SHA256_RSA2048 --key $BOOT_SIGN_KEY_PATH 2>/dev/null || true
+                cp boot.img ../
+              fi
+
+              $MKBOOTIMG --header_version 4 --kernel Image.gz --output boot-gz.img --ramdisk $RAMDISK_SRC --os_version $OS_VERSION --os_patch_level "$OS_PATCH" 2>/dev/null || true
+              if [ -f "boot-gz.img" ] && [ -f "$BOOT_SIGN_KEY_PATH" ]; then
+                $AVBTOOL add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) --image boot-gz.img --algorithm SHA256_RSA2048 --key $BOOT_SIGN_KEY_PATH 2>/dev/null || true
+                cp boot-gz.img ../
+              fi
+
+              if [ -f "Image.lz4" ]; then
+                $MKBOOTIMG --header_version 4 --kernel Image.lz4 --output boot-lz4.img --ramdisk $RAMDISK_SRC --os_version $OS_VERSION --os_patch_level "$OS_PATCH" 2>/dev/null || true
+                if [ -f "boot-lz4.img" ] && [ -f "$BOOT_SIGN_KEY_PATH" ]; then
+                  $AVBTOOL add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) --image boot-lz4.img --algorithm SHA256_RSA2048 --key $BOOT_SIGN_KEY_PATH 2>/dev/null || true
+                  cp boot-lz4.img ../
+                fi
+              fi
+            fi
+          fi
+          cd ..
+
+      - name: 收集补丁冲突文件
+        if: always()
+        run: |
+          REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
+          mkdir -p "$REJECTS_DIR"
+          KERNEL_ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
+          mapfile -t REJS < <(find "$KERNEL_ROOT" -type f -name '*.rej' 2>/dev/null)
+          REJ_COUNT=${#REJS[@]}
+          echo "发现 $REJ_COUNT 个 .rej 文件"
+          echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
+          if [ "$REJ_COUNT" -gt 0 ]; then
+            for REJ in "${REJS[@]}"; do
+              REL="${REJ#"$KERNEL_ROOT"/}"
+              DEST="$REJECTS_DIR/$REL"
+              mkdir -p "$(dirname "$DEST")"
+              cp "$REJ" "$DEST"
+              ORIG="${REJ%.rej}"
+              if [ -f "$ORIG" ]; then cp "$ORIG" "${DEST%.rej}"; fi
+              echo "$REL" >> "$REJECTS_DIR/index.txt"
+            done
+          fi
+
       - name: Download Latest SUSFS Module from CI
         if: ${{ github.event.inputs.SUSFS_CI == 'CI' && github.event.inputs.SUSFS_META != '-1' }}
         continue-on-error: true
@@ -1321,9 +1420,9 @@ jobs:
           echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
+          name: SukiSUUltra_kernel-${{ steps.extract_info.outputs.value }}-AnyKernel3
           path: ./AnyKernel3/*
 
       - name: Extract and Process ZRAM Module
@@ -1381,7 +1480,7 @@ jobs:
 
       - name: Upload ZRAM Module
         if: startsWith(github.event.inputs.ZRAM, '1/') && steps.zram_find.outputs.upload != 'false'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}
           path: ZRAM-Module/*
